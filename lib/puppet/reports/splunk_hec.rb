@@ -27,6 +27,19 @@ Puppet::Reports.register_report(:splunk_hec) do
       },
     }
 
+    # puppet 4 compatibility, code_id and job_id were added in puppet 5
+    if defined?(job_id)
+      local_job_id = job_id
+    else
+      local_job_id = ''
+    end
+
+    if defined?(code_id)
+      local_code_id = code_id
+    else
+      local_code_id = ''
+    end
+
     event = {
       'host' => host,
       'time' => epoch,
@@ -35,11 +48,11 @@ Puppet::Reports.register_report(:splunk_hec) do
         'cached_catalog_status' =>  cached_catalog_status,
         'catalog_uuid' => catalog_uuid,
         'certname' => host,
-        'code_id' => code_id,
+        'code_id' => local_code_id,
         'configuration_version' => configuration_version,
         'corrective_change' => corrective_change,
         'environment' => environment,
-        'job_id' => job_id,
+        'job_id' => local_job_id,
         'metrics' => metrics,
         'noop' => noop,
         'noop_pending' => noop_pending,
