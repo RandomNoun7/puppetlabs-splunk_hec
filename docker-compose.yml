@@ -21,8 +21,8 @@ services:
       - puppetserver-code:/etc/puppetlabs/code/
       - puppetserver-config:/etc/puppetlabs/puppet/
       - puppetserver-data:/opt/puppetlabs/server/data/puppetserver/
-      - ./spec/fixtures/modules:/etc/puppetlabs/code/environments/production/modules
-      - ./splunk_hec/pkg:/tmp/pkg
+      - ${PWD}/spec/fixtures/modules:/etc/puppetlabs/code/environments/production/modules
+      - ${PWD}/pkg:/tmp/pkg
 
   postgres:
     image: postgres:9.6
