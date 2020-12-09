@@ -1,0 +1,104 @@
+version: '3.7'
+
+services:
+  puppet:
+    hostname: puppet
+    image: puppet/puppetserver:${PUPPETSERVER_VERSION:-latest}
+    ports:
+      - 8140:8140
+    environment:
+      # necessary to set certname and server in puppet.conf, required by
+      # puppetserver ca cli application
+      - PUPPETSERVER_HOSTNAME=puppet
+      # DNS_ALT_NAMES must be set before starting the stack the first time,
+      # and must list all the names under which the puppetserver can be
+      # reached. Add other names as a comma-separated list
+      - CA_ALLOW_SUBJECT_ALT_NAMES=true
+      - DNS_ALT_NAMES=${DNS_ALT_NAMES:-}
+      - PUPPERWARE_ANALYTICS_ENABLED=${PUPPERWARE_ANALYTICS_ENABLED:-true}
+      - PUPPETDB_SERVER_URLS=https://puppetdb:8081
+    volumes:
+      - puppetserver-code:/etc/puppetlabs/code/
+      - puppetserver-config:/etc/puppetlabs/puppet/
+      - puppetserver-data:/opt/puppetlabs/server/data/puppetserver/
+      - ./spec/fixtures/modules:/etc/puppetlabs/code/environments/production/modules
+      - ./splunk_hec/pkg:/tmp/pkg
+
+  postgres:
+    image: postgres:9.6
+    hostname: postgres
+    environment:
+      - POSTGRES_PASSWORD=puppetdb
+      - POSTGRES_USER=puppetdb
+      - POSTGRES_DB=puppetdb
+    healthcheck:
+      # existence check for puppetdb database
+      test: [ 'CMD-SHELL', "psql --username=puppetdb puppetdb -c ''" ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 2m
+    expose:
+      - 5432
+    volumes:
+      - puppetdb-postgres:/var/lib/postgresql/data
+      - ./postgres-custom:/docker-entrypoint-initdb.d
+
+  puppetdb:
+    hostname: puppetdb
+    image: puppet/puppetdb:${PUPPETDB_VERSION:-latest}
+    environment:
+      - PUPPERWARE_ANALYTICS_ENABLED=${PUPPERWARE_ANALYTICS_ENABLED:-true}
+      # This name is an FQDN so the short name puppet doesn't collide outside compose network
+      - PUPPETSERVER_HOSTNAME=puppet
+      - PUPPETDB_POSTGRES_HOSTNAME=postgres
+      - PUPPETDB_PASSWORD=puppetdb
+      - PUPPETDB_USER=puppetdb
+      - DNS_ALT_NAMES=${DNS_ALT_NAMES:-}
+    ports:
+      - 8080
+      - 8081
+    depends_on:
+      - postgres
+      - puppet
+    volumes:
+      - puppetdb:/opt/puppetlabs/server/data/puppetdb
+
+  # agent:
+  #   hostname: agent
+  #   image: puppet/puppet-agent-ubuntu:latest
+  #   depends_on:
+  #     - puppet
+
+  enterprise:
+    image: splunk/splunk:latest
+    hostname: splunk_instance
+    environment:
+      - SPLUNK_START_ARGS=--accept-license
+      # The splunkbase credentials are to download and install the Puppet
+      # Report Viewer from Splunkbase.
+      # We could alternatively download the packaged app from a location
+      # like github for testing.
+      # - SPLUNK_APPS_URL=https://splunkbase.splunk.com/app/4413/release/3.0.1/download
+      # # TODO: Make a PIE account
+      - SPLUNKBASE_USERNAME=gregsparks
+      - SPLUNKBASE_PASSWORD=2Riboflavin!
+      - SPLUNK_PASSWORD=piepiepie
+    volumes:
+      # default.yml is a mechanism to load splunk settings that would normally
+      # be configured through the ui.
+      - ./splunk_defaults.yml:/tmp/defaults/default.yml
+    ports:
+      # localhost:8000 will bring up the web interface
+      - "0.0.0.0:8000:8000"
+      # 8088 is the hec endpoint
+      - "0.0.0.0:8088:8088"
+      - "0.0.0.0:4433:4433"
+
+
+volumes:
+  puppetserver-code:
+  puppetserver-config:
+  puppetserver-data:
+  puppetdb:
+  puppetdb-postgres:
