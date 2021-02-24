@@ -177,11 +177,23 @@ namespace :acceptance do
     end
   end
 
+  desc 'setup midserver process'
+  task :setup_midserver do
+    raise 'must set DEV_INSTANCE environment variable' unless ENV['DEV_INSTANCE']
+    master.bolt_upload_file('spec/support/acceptance/install_midserver.sh', '/tmp/install_midserver.sh')
+    command = <<-COMMAND
+    chmod +x /tmp/install_midserver.sh
+    /tmp/install_midserver.sh #{ENV['DEV_INSTANCE']}
+    COMMAND
+    master.run_shell(command)
+  end
+
   desc 'Set up the test infrastructure'
   task :setup do
     tasks = [
       :provision_vms,
       :setup_pe,
+      :setup_midserver,
       :setup_splunk_instance,
       :install_module,
     ]
