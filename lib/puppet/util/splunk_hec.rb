@@ -21,6 +21,39 @@ module Puppet::Util::Splunk_hec
   def create_http(source_type)
     splunk_url = get_splunk_url(source_type)
     @uri = URI.parse(splunk_url)
+    File.write('/tmp/ssl-troubleshooting', "#{@uri}\n")
+
+    # Troubleshooting SSL Verification
+    begin
+      # Connect to the end point to retrieve the server cert
+      sock = TCPSocket.new(@uri.host, 8088)
+      ssl = OpenSSL::SSL::SSLSocket.new(sock)
+      ssl.connect
+      server_cert = ssl.peer_cert
+
+      # Read the CACert from the disk
+      ca_cert_path = File.join(Puppet[:confdir], 'splunk_hec', settings['ssl_ca'])
+      ca_cert_string = File.read(ca_cert_path)
+      ca_cert = OpenSSL::X509::Certificate.new ca_cert_string
+
+      # Manually validate the cert
+      store = OpenSSL::X509::Store.new
+      store.add_cert(ca_cert)
+      validated = store.verify(server_cert)
+
+      # Write the result of certificate validation
+      File.write('/tmp/cert-validated', validated)
+
+      # Write cert descriptions to files
+      File.write('/tmp/ca_cert', ca_cert.to_text)
+      File.write('/tmp/server_cert', server_cert.to_text)
+    rescue => e
+      File.write('/tmp/ssl-troubleshooting-error-log', e.message)
+      File.write('/tmp/ssl-troubleshooting-error-log', e.backtrace.join("\n"), mode: "a")
+    end
+
+    # END Troubleshooting SSL Verification
+
     timeout = settings['timeout'] || '1'
     http = Net::HTTP.new(@uri.host, @uri.port)
     http.open_timeout = timeout.to_i
@@ -31,7 +64,7 @@ module Puppet::Util::Splunk_hec
         Puppet.info "Will verify #{splunk_url} SSL identity"
         ssl_ca = File.join(Puppet[:confdir], 'splunk_hec', settings['ssl_ca'])
         http.ca_file = ssl_ca
-        raise Puppet::Error, "CA file #{ssl_ca} does not exist" unless File.exist? ssl_ca
+        raise Puppet::Error, "CA file #{ssl_ca} does not exist" unless File.exist? ssl_ca 
 
         http.verify_mode = OpenSSL::SSL::VERIFY_PEER
       else
