@@ -104,6 +104,7 @@ Puppet::Reports.register_report(:splunk_hec) do
     submit_request event
     if record_event
       store_event event
+      Puppet.info "splunk troubleshooting: send event complete."
     end
   rescue StandardError => e
     Puppet.err "Could not send report to Splunk: #{e}\n#{e.backtrace}"

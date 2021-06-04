@@ -18,38 +18,45 @@ module Puppet::Util::Splunk_hec
     @settings = YAML.load_file(@settings_file)
   end
 
+  def in_metrics_collection
+    caller.any?(%r{send_pe_metrics})
+  end
+
   def create_http(source_type)
     splunk_url = get_splunk_url(source_type)
     @uri = URI.parse(splunk_url)
-    File.write('/tmp/ssl-troubleshooting', "#{@uri}\n")
 
     # Troubleshooting SSL Verification
     begin
       # Connect to the end point to retrieve the server cert
       sock = TCPSocket.new(@uri.host, 8088)
-      ssl = OpenSSL::SSL::SSLSocket.new(sock)
-      ssl.connect
-      server_cert = ssl.peer_cert
+      ssl_context = OpenSSL::SSL::SSLContext.new()
 
-      # Read the CACert from the disk
+      ssl_context.verify_callback = Proc.new do |passed, store_context|
+        true
+      end
+
+      ssl_socket = OpenSSL::SSL::SSLSocket.new(sock, ssl_context)
+      ssl_socket.connect
+      server_cert = ssl_socket.peer_cert
+
+      # Get the CA Cert Path
       ca_cert_path = File.join(Puppet[:confdir], 'splunk_hec', settings['ssl_ca'])
-      ca_cert_string = File.read(ca_cert_path)
-      ca_cert = OpenSSL::X509::Certificate.new ca_cert_string
 
       # Manually validate the cert
       store = OpenSSL::X509::Store.new
-      store.add_cert(ca_cert)
+      store.add_file(ca_cert_path)
       validated = store.verify(server_cert)
 
       # Write the result of certificate validation
-      File.write('/tmp/cert-validated', validated)
+      message = "splunk troubleshooting: manual cert validation: #{validated}, metrics_collection?: #{in_metrics_collection}, URI: #{@uri}, chain: #{store.chain}, error_code: #{store.error}, error_string: #{store.error_string}"
 
-      # Write cert descriptions to files
-      File.write('/tmp/ca_cert', ca_cert.to_text)
-      File.write('/tmp/server_cert', server_cert.to_text)
+      Puppet.info message
+      File.write('/tmp/splunk-troubleshooting', message.prepend("\n"), mode: 'a')
     rescue => e
-      File.write('/tmp/ssl-troubleshooting-error-log', e.message)
-      File.write('/tmp/ssl-troubleshooting-error-log', e.backtrace.join("\n"), mode: "a")
+      message = "splunk troubleshooting: #{e.message}\n#{e.backtrace.join("\n")}"
+      Puppet.info message
+      File.write('/tmp/splunk-troubleshooting', message.prepend("\n"), mode: 'a')
     end
 
     # END Troubleshooting SSL Verification
