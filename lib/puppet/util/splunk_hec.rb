@@ -18,43 +18,58 @@ module Puppet::Util::Splunk_hec
     @settings = YAML.load_file(@settings_file)
   end
 
-  def create_http(source_type)
-    splunk_url = get_splunk_url(source_type)
-    @uri = URI.parse(splunk_url)
-    timeout = settings['timeout'] || '1'
-    http = Net::HTTP.new(@uri.host, @uri.port)
-    http.open_timeout = timeout.to_i
-    http.read_timeout = timeout.to_i
-    http.use_ssl = @uri.scheme == 'https'
-    if http.use_ssl?
-      if settings['ssl_ca'] && !settings['ssl_ca'].empty?
-        Puppet.info "Will verify #{splunk_url} SSL identity"
-        ssl_ca = File.join(Puppet[:confdir], 'splunk_hec', settings['ssl_ca'])
-        http.ca_file = ssl_ca
-        raise Puppet::Error, "CA file #{ssl_ca} does not exist" unless File.exist? ssl_ca
+  def token(source_type)
+    # we want users to be able to provide different tokens per sourcetype if they want
+    token_name = "token_#{source_type}"
+    token = settings[token_name] || settings['token'] || raise(Puppet::Error, 'Must provide token parameter to splunk class')
+  end
 
-        http.verify_mode = OpenSSL::SSL::VERIFY_PEER
-      else
-        Puppet.info "Will NOT verify #{splunk_url} SSL identity"
-        http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+  def use_ssl(source_type)
+    uri = get_splunk_url(source_type)
+    uri.scheme == 'https'
+  end
+
+  def ca_certificates(ca_file_path)
+    return if File.zero?(ca_file_path)
+    splitcert = ""
+    cert_arr = []
+    i = 0
+    File.readlines(ca_file_path) do |line|
+      splitcert += line
+      if line =~ /-----END [^\-]+-----/
+        cert_arr << splitcert
+        splitcert = ""
       end
     end
 
-    http
+    cert_arr.map do |c|
+      OpenSSL::X509::Certificate.new(c.to_s)
+    end
+  end
+
+  def get_ssl_context
+    if settings['ssl_ca'] && !settings['ssl_ca'].empty?
+      ca_file_path = File.join(Puppet[:confdir], 'splunk_hec', settings['ssl_ca'])
+      raise Puppet::Error, "CA file #{ssl_ca} does not exist" unless File.exist? ca_file_path
+      ca_cert_collection = ca_certificates(ca_file_path)
+      Puppet::SSL::SSLProvider.new.create_root_context(cacerts: ca_cert_collection)
+    end
   end
 
   def submit_request(body)
-    # we want users to be able to provide different tokens per sourcetype if they want
-    source_type = body['sourcetype'].split(':')[1]
-    token_name = "token_#{source_type}"
-    http = create_http(source_type)
-    token = settings[token_name] || settings['token'] || raise(Puppet::Error, 'Must provide token parameter to splunk class')
-    req = Net::HTTP::Post.new(@uri.path.to_str)
-    req.add_field('Authorization', "Splunk #{token}")
-    req.add_field('Content-Type', 'application/json')
-    req.content_type = 'application/json'
-    req.body = body.to_json
-    http.request(req)
+    source_type = source_type = body['sourcetype'].split(':')[1]
+    splunk_uri = get_splunk_url(source_type)
+    ssl_context = get_ssl_context
+
+    headers = {
+      'Authorization' => "Splunk #{token(source_type)}",
+      'Content-Type'  => 'application/json',
+    }
+
+    Puppet.info "Will verify #{splunk_uri} SSL identity" unless ssl_context.nil?
+
+    client = Puppet::HTTP::Client.new(ssl_context: ssl_context)
+    client.post(splunk_uri, body.to_json, headers: headers)
   end
 
   def store_event(event)
@@ -87,7 +102,9 @@ module Puppet::Util::Splunk_hec
 
   def get_splunk_url(source_type)
     url_name = "url_#{source_type}"
-    settings[url_name] || settings['url'] || raise(Puppet::Error, 'Must provide url parameter to splunk class')
+    uri = settings[url_name] || settings['url']
+    raise(Puppet::Error, 'Must provide url parameter to splunk class') unless uri
+    URI.parse(uri)
   end
 
   def pe_console
